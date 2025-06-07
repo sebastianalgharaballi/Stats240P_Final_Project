@@ -1,4 +1,25 @@
-.Rproj.user
-.Rhistory
+# Dataset files
+*.h5ad
+*.h5
+*.csv
+*.xlsx
+*.RData
+*.rds
+
+# Specific dataset (replace with your actual filename)
+tabula-muris-senis-facs-official-raw-obj.h5ad
+
+# R environment files
 .RData
-.Ruserdata
+.Rhistory
+.Rproj.user/
+
+# Output files
+*.pdf
+*.png
+*.html
+
+# Large data directories
+data/
+datasets/
+raw_data/

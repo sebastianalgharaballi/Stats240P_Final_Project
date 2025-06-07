@@ -15,16 +15,544 @@ This is an R Markdown document. Markdown is a simple formatting syntax for autho
 
 When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
-```{r cars}
-summary(cars)
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+
+packages <- c("zellkonverter", "SingleCellExperiment", "MatrixGenerics",
+              "reticulate", "basilisk", "rhdf5", "DelayedArray", "HDF5Array")
+
+for (pkg in packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    BiocManager::install(pkg, ask = FALSE, update = TRUE)
+  }
+}
+
+library(zellkonverter)
+library(SingleCellExperiment)
+library(MatrixGenerics)
+library(sparseMatrixStats)
+library(dplyr)
+
+#Make sure to save the dataset and then change the path!
+sce <- readH5AD("tabula-muris-senis-facs-official-raw-obj.h5ad")
+meta <- colData(sce)
+group <- meta$age
+
+#Expression Matrix: A matrix where rows are genes, columns are cells, and each entry represents the expression level of a gene in a specific cell.
+expr <- assay(sce)
+gene_variances <- rowVars(expr)
+top_genes_idx <- order(gene_variances, decreasing = TRUE)[1:10]
+top_genes <- rownames(expr)[top_genes_idx]
+expr_top <- expr[top_genes, ]
+
+expr_top_df <- as.data.frame(t(as.matrix(expr_top)))
+expr_top_df$group <- as.factor(group)
+
+gene_means <- apply(expr_top_df[, 1:10], 2, mean)
+gene_sds <- apply(expr_top_df[, 1:10], 2, sd)
 ```
 
-## Including Plots
+```{r}
+# Comprehensive K-means Clustering Analysis
+library(ggplot2)
+library(dplyr)
 
-You can also embed plots, for example:
+# Set seed for reproducibility
+set.seed(123)
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+# Prepare data - work with subset for speed (adjust sample_size as needed)
+sample_size <- 5000
+sample_indices <- sample(nrow(expr_top_df), sample_size)
+cluster_data <- expr_top_df[sample_indices, 1:10]  # Gene expression only
+age_groups <- expr_top_df$group[sample_indices]
+
+# Scale the data
+cluster_scaled <- scale(cluster_data)
+
+# Find optimal k using elbow method
+wss <- sapply(1:10, function(k) {
+  kmeans(cluster_scaled, k, nstart = 25)$tot.withinss
+})
+
+# Plot elbow curve
+elbow_data <- data.frame(k = 1:10, wss = wss)
+p1 <- ggplot(elbow_data, aes(x = k, y = wss)) +
+  geom_line() + geom_point() +
+  labs(title = "Elbow Method for Optimal k", x = "Number of Clusters", y = "WSS")
+print(p1)
+
+# Perform k-means with optimal k (trying k=4 to match age groups)
+kmeans_result <- kmeans(cluster_scaled, centers = 4, nstart = 25)
+
+# PCA for visualization
+pca_result <- prcomp(cluster_scaled, center = TRUE, scale. = TRUE)
+
+# Create results dataframe
+results_df <- data.frame(
+  PC1 = pca_result$x[, 1],
+  PC2 = pca_result$x[, 2],
+  Cluster = as.factor(kmeans_result$cluster),
+  Age_Group = age_groups
+)
+
+# Plot clusters vs age groups
+p2 <- ggplot(results_df, aes(x = PC1, y = PC2, color = Cluster)) +
+  geom_point(alpha = 0.7) +
+  labs(title = "K-means Clusters", subtitle = "PCA visualization")
+
+p3 <- ggplot(results_df, aes(x = PC1, y = PC2, color = Age_Group)) +
+  geom_point(alpha = 0.7) +
+  labs(title = "Original Age Groups", subtitle = "PCA visualization")
+
+print(p2)
+print(p3)
+
+# Compare clusters to age groups
+confusion_matrix <- table(results_df$Cluster, results_df$Age_Group)
+print("Confusion Matrix (Clusters vs Age Groups):")
+print(confusion_matrix)
+
+# Calculate cluster statistics
+cluster_purity <- sum(apply(confusion_matrix, 1, max)) / nrow(results_df)
+print(paste("Cluster Purity:", round(cluster_purity, 3)))
+
+# Summary statistics
+print("Cluster Centers (first 5 genes):")
+print(round(kmeans_result$centers[, 1:5], 2))
+
+print("Cluster Sizes:")
+print(table(results_df$Cluster))
+
+print("Age Group Distribution:")
+print(table(results_df$Age_Group))
+
+# Variance explained by first 2 PCs
+var_explained <- summary(pca_result)$importance[2, 1:2] * 100
+print(paste("PC1 explains", round(var_explained[1], 1), "% of variance"))
+print(paste("PC2 explains", round(var_explained[2], 1), "% of variance"))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+# COMPREHENSIVE AUTOMATED AGING ANALYSIS PIPELINE
+# Full dataset analysis: Gene selection → Top tissue identification → Multi-tissue comparison
+
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(RColorBrewer)
+library(reshape2)
+library(sparseMatrixStats)
+
+print("STARTING COMPREHENSIVE AGING ANALYSIS PIPELINE")
+print("Using FULL DATASET for maximum statistical power")
+print("================================================================")
+
+# ============================================================================
+# PART 1: IDENTIFY MOST IMPORTANT AGING GENES
+# ============================================================================
+
+print("\nPART 1: SELECTING BIOLOGICALLY IMPORTANT GENES")
+
+# Known aging gene keywords (comprehensive list)
+aging_keywords <- c(
+  # Core aging pathways
+  "Tp53", "p53", "Cdkn", "p21", "p16", "Rb1", "Sirt", "mTor", "Foxo", "Igf1", "Igf2", 
+  "Tert", "Terc", "Atm", "Parp",
+  # Cellular senescence
+  "Il6", "Il1", "Tnf", "Nfkb", "Cxcl", "Ccl", "Sasp", "Cdkn1a", "Cdkn2a",
+  # DNA damage/repair
+  "Brca", "Xrcc", "Ercc", "Pold", "Pole", "H2afx", "Chek", "Atr", "Dna2",
+  # Metabolism/mitochondria
+  "Pparg", "Sod", "Cat", "Gpx", "Nrf2", "Keap1", "Pgc1", "Tfam", "Cox", "Atp", "Nd",
+  # Extracellular matrix
+  "Col1", "Col3", "Col4", "Mmp", "Timp", "Fn1", "Lam", "Eln", "Fbln", "Lox",
+  # Proteostasis
+  "Hsf", "Hsp", "Bag", "Stub1", "Psm", "Ub", "Atg", "Becn", "Lc3", "Sqstm",
+  # Inflammation/immune aging
+  "Nlrp", "Casp1", "Il18", "Asc", "Aim2", "Ifi", "Isg", "Mx1", "Oas"
+)
+
+# Find aging-related genes in dataset
+all_genes <- rownames(expr)
+aging_genes <- c()
+for(keyword in aging_keywords) {
+  matches <- grep(keyword, all_genes, ignore.case = TRUE, value = TRUE)
+  aging_genes <- c(aging_genes, matches)
+}
+aging_genes <- unique(aging_genes)
+
+print(paste("Found", length(aging_genes), "known aging-related genes"))
+
+# Calculate expression statistics for all genes using sparse matrix functions
+gene_stats <- data.frame(
+  gene = rownames(expr),
+  mean_expr = rowMeans2(expr),
+  detection_rate = rowMeans2(expr > 0),
+  variance = rowVars(expr),
+  stringsAsFactors = FALSE
+)
+
+# Filter for well-expressed genes
+expressed_genes <- gene_stats %>%
+  filter(detection_rate > 0.01, mean_expr > 1, variance > 0.5)
+
+print(paste("Filtered to", nrow(expressed_genes), "well-expressed genes"))
+
+# Find tissue-specific genes
+major_tissues <- names(table(meta$tissue))[table(meta$tissue) > 500]
+tissue_specific_genes <- c()
+
+for(tissue in major_tissues) {
+  tissue_cells <- which(meta$tissue == tissue)
+  other_cells <- which(meta$tissue != tissue)
+  
+  if(length(tissue_cells) > 100) {
+    tissue_expr <- rowMeans2(expr[, tissue_cells])
+    other_expr <- rowMeans2(expr[, other_cells])
+    fold_change <- (tissue_expr + 0.1) / (other_expr + 0.1)
+    
+    tissue_enriched <- names(fold_change)[fold_change > 2 & tissue_expr > 2]
+    tissue_specific_genes <- c(tissue_specific_genes, tissue_enriched)
+  }
+}
+tissue_specific_genes <- unique(tissue_specific_genes)
+
+# Metabolic genes
+metabolic_keywords <- c("Atp", "Cox", "Nd", "Cyc", "Sod", "Cat", "Gpx", "Gsr", "Prdx")
+metabolic_genes <- c()
+for(keyword in metabolic_keywords) {
+  matches <- grep(keyword, all_genes, ignore.case = TRUE, value = TRUE)
+  metabolic_genes <- c(metabolic_genes, matches)
+}
+metabolic_genes <- intersect(unique(metabolic_genes), expressed_genes$gene)
+
+# Top variable genes
+top_variable <- expressed_genes %>% arrange(desc(variance)) %>% head(500) %>% pull(gene)
+
+# Combine all important genes
+priority1 <- intersect(aging_genes, expressed_genes$gene)
+priority2 <- intersect(tissue_specific_genes, expressed_genes$gene)
+
+important_genes <- unique(c(priority1, priority2, metabolic_genes, top_variable))
+
+# Use ALL important genes - no artificial limit
+final_genes <- important_genes
+
+print(paste("Selected", length(final_genes), "most important genes for aging analysis"))
+print(paste("  - Known aging genes:", length(intersect(final_genes, aging_genes))))
+print(paste("  - Tissue-enriched genes:", length(intersect(final_genes, tissue_specific_genes))))
+print(paste("  - Metabolic genes:", length(intersect(final_genes, metabolic_genes))))
+
+# ============================================================================
+# PART 2: IDENTIFY TOP 5 TISSUES FOR ANALYSIS
+# ============================================================================
+
+print("\nPART 2: IDENTIFYING TOP 5 TISSUES FOR ANALYSIS")
+
+# Evaluate all tissues for aging analysis suitability
+tissue_evaluation <- data.frame()
+
+for(tissue in names(table(meta$tissue))) {
+  tissue_cells <- which(meta$tissue == tissue)
+  tissue_ages <- meta$age[tissue_cells]
+  
+  age_counts <- table(tissue_ages)
+  young_count <- sum(age_counts[names(age_counts) %in% c("3m")])
+  old_count <- sum(age_counts[names(age_counts) %in% c("18m", "24m")])
+  total_count <- length(tissue_cells)
+  
+  # Calculate suitability score
+  age_balance <- min(young_count, old_count) / max(young_count, old_count)
+  min_group_size <- min(young_count, old_count)
+  
+  # Score = total cells * age balance * minimum group adequacy
+  suitability_score <- total_count * age_balance * (min_group_size > 100)
+  
+  tissue_evaluation <- rbind(tissue_evaluation, data.frame(
+    tissue = tissue,
+    total_cells = total_count,
+    young_cells = young_count,
+    old_cells = old_count,
+    age_balance = age_balance,
+    min_group_size = min_group_size,
+    suitability_score = suitability_score
+  ))
+}
+
+# Select top 5 tissues
+tissue_evaluation <- tissue_evaluation %>%
+  filter(min_group_size >= 100) %>%
+  arrange(desc(suitability_score)) %>%
+  head(5)
+
+top_5_tissues <- tissue_evaluation$tissue
+
+print("Top 5 tissues selected for analysis:")
+for(i in 1:nrow(tissue_evaluation)) {
+  cat(sprintf("%d. %s: %d cells (%d young, %d old) - Score: %.0f\n", 
+              i, tissue_evaluation$tissue[i], tissue_evaluation$total_cells[i],
+              tissue_evaluation$young_cells[i], tissue_evaluation$old_cells[i],
+              tissue_evaluation$suitability_score[i]))
+}
+
+# ============================================================================
+# PART 3: COMPREHENSIVE MULTI-TISSUE AGING ANALYSIS
+# ============================================================================
+
+print("\nPART 3: RUNNING COMPREHENSIVE AGING ANALYSIS ON TOP 5 TISSUES")
+
+# Subset expression matrix to important genes
+important_expr <- expr[rownames(expr) %in% final_genes, ]
+print(paste("Using", nrow(important_expr), "important genes"))
+
+# Function for focused aging analysis
+analyze_tissue_comprehensive <- function(tissue_name, expr_data, metadata) {
+  
+  cat("  Analyzing", tissue_name, "...\n")
+  
+  tissue_mask <- metadata$tissue == tissue_name
+  tissue_cells <- which(tissue_mask)
+  tissue_expr <- expr_data[, tissue_cells]
+  tissue_ages <- metadata$age[tissue_cells]
+  
+  young_cells <- which(tissue_ages %in% c("3m"))
+  old_cells <- which(tissue_ages %in% c("18m", "24m"))
+  
+  results <- data.frame()
+  
+  # Test all important genes
+  for(i in 1:nrow(tissue_expr)) {
+    young_expr <- tissue_expr[i, young_cells]
+    old_expr <- tissue_expr[i, old_cells]
+    gene_name <- rownames(tissue_expr)[i]
+    
+    # Categorize gene
+    if(gene_name %in% aging_genes) gene_category <- "Known_Aging"
+    else if(gene_name %in% tissue_specific_genes) gene_category <- "Tissue_Enriched"
+    else if(gene_name %in% metabolic_genes) gene_category <- "Metabolic"
+    else gene_category <- "High_Variance"
+    
+    # Test if reasonably expressed
+    if(sum(young_expr > 0) >= 5 & sum(old_expr > 0) >= 5) {
+      mean_young <- mean(young_expr)
+      mean_old <- mean(old_expr)
+      fc <- (mean_old + 0.1) / (mean_young + 0.1)
+      
+      test_result <- wilcox.test(young_expr, old_expr, alternative = "two.sided")
+      
+      results <- rbind(results, data.frame(
+        gene = gene_name,
+        mean_young = mean_young,
+        mean_old = mean_old,
+        fold_change = fc,
+        p_value = test_result$p.value,
+        tissue = tissue_name,
+        gene_category = gene_category,
+        stringsAsFactors = FALSE
+      ))
+    }
+  }
+  
+  # Adjust p-values
+  results$p_adjusted <- p.adjust(results$p_value, method = "fdr")
+  results$log2_fc <- log2(results$fold_change)
+  results$neg_log10_p <- -log10(results$p_adjusted)
+  results$significant <- results$p_adjusted < 0.05
+  
+  return(results)
+}
+
+# Run analysis on top 5 tissues
+all_results <- list()
+for(tissue in top_5_tissues) {
+  result <- analyze_tissue_comprehensive(tissue, important_expr, meta)
+  all_results[[tissue]] <- result
+}
+
+# Combine results
+combined_results <- do.call(rbind, all_results)
+
+print("Analysis complete for all top 5 tissues")
+
+# ============================================================================
+# PART 4: COMPREHENSIVE RESULTS AND VISUALIZATIONS
+# ============================================================================
+
+print("\nPART 4: GENERATING COMPREHENSIVE RESULTS AND VISUALIZATIONS")
+
+# Summary statistics
+summary_stats <- combined_results %>%
+  group_by(tissue) %>%
+  summarise(
+    total_genes = n(),
+    significant_genes = sum(significant),
+    known_aging_sig = sum(significant & gene_category == "Known_Aging"),
+    tissue_enriched_sig = sum(significant & gene_category == "Tissue_Enriched"),
+    metabolic_sig = sum(significant & gene_category == "Metabolic"),
+    upregulated = sum(significant & log2_fc > log2(1.5)),
+    downregulated = sum(significant & log2_fc < log2(0.67)),
+    pct_significant = round(100 * sum(significant) / n(), 1),
+    avg_effect_size = round(mean(abs(log2_fc[significant]), na.rm = TRUE), 2)
+  )
+
+print("AGING ANALYSIS SUMMARY FOR TOP 5 TISSUES:")
+print(summary_stats)
+
+# 1. MAIN VOLCANO PLOT GRID
+print("\nCreating volcano plot grid...")
+
+all_log2_fc <- combined_results$log2_fc
+all_neg_log10_p <- combined_results$neg_log10_p
+x_limits <- c(min(all_log2_fc, na.rm = TRUE), max(all_log2_fc, na.rm = TRUE))
+y_limits <- c(0, max(all_neg_log10_p, na.rm = TRUE))
+
+plot_list <- list()
+
+for(tissue in top_5_tissues) {
+  tissue_data <- combined_results[combined_results$tissue == tissue, ]
+  
+  # Enhanced color scheme
+  tissue_data$plot_color <- "Other"
+  tissue_data$plot_color[tissue_data$gene_category == "Known_Aging" & tissue_data$significant] <- "Aging_Sig"
+  tissue_data$plot_color[tissue_data$gene_category == "Known_Aging" & !tissue_data$significant] <- "Aging_NS"
+  tissue_data$plot_color[tissue_data$gene_category == "Metabolic" & tissue_data$significant] <- "Metabolic_Sig"
+  tissue_data$plot_color[tissue_data$gene_category != "Known_Aging" & tissue_data$gene_category != "Metabolic" & tissue_data$significant] <- "Other_Sig"
+  
+  sig_count <- sum(tissue_data$significant)
+  aging_count <- sum(tissue_data$significant & tissue_data$gene_category == "Known_Aging")
+  
+  p <- ggplot(tissue_data, aes(x = log2_fc, y = neg_log10_p, color = plot_color)) +
+    geom_point(alpha = 0.7, size = 1.2) +
+    scale_color_manual(values = c(
+      "Aging_Sig" = "#FF0000",      # Bright red
+      "Aging_NS" = "#FFB6C1",       # Light pink
+      "Metabolic_Sig" = "#FFA500",  # Orange
+      "Other_Sig" = "#32CD32",      # Green
+      "Other" = "#D3D3D3"           # Light grey
+    )) +
+    labs(title = paste(tissue),
+         subtitle = paste("Significant:", sig_count, "| Aging genes:", aging_count),
+         x = "Log2 Fold Change (Old/Young)",
+         y = "-Log10 Adjusted P-value") +
+    xlim(x_limits) + ylim(y_limits) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "blue", alpha = 0.7) +
+    geom_vline(xintercept = 0, linetype = "solid", color = "black", alpha = 0.3) +
+    geom_vline(xintercept = c(log2(1.5), log2(0.67)), linetype = "dotted", color = "red", alpha = 0.5) +
+    theme_minimal() +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 14, hjust = 0.5, face = "bold"),
+          plot.subtitle = element_text(size = 11, hjust = 0.5))
+  
+  plot_list[[tissue]] <- p
+}
+
+# Main volcano grid
+main_grid <- do.call(grid.arrange, c(plot_list, ncol = 3, 
+                                     top = "AGING SIGNATURES ACROSS TOP 5 TISSUES\nRed=Aging genes, Orange=Metabolic, Green=Other significant"))
+print(main_grid)
+
+# 2. SUMMARY BAR PLOTS
+print("\nCreating summary visualizations...")
+
+# Significant genes by category
+category_data <- combined_results %>%
+  filter(significant) %>%
+  group_by(tissue, gene_category) %>%
+  summarise(count = n(), .groups = "drop")
+
+p_category <- ggplot(category_data, aes(x = tissue, y = count, fill = gene_category)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_brewer(type = "qual", palette = "Set2") +
+  labs(title = "Significant Aging Genes by Category",
+       x = "Tissue", y = "Number of Significant Genes",
+       fill = "Gene Category") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 14, face = "bold"))
+
+print(p_category)
+
+# Up vs Down regulation
+direction_data <- summary_stats %>%
+  select(tissue, upregulated, downregulated) %>%
+  melt(id.vars = "tissue", variable.name = "direction", value.name = "count")
+
+p_direction <- ggplot(direction_data, aes(x = tissue, y = count, fill = direction)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("upregulated" = "#FF6B6B", "downregulated" = "#4ECDC4")) +
+  labs(title = "Gene Regulation Direction by Tissue",
+       x = "Tissue", y = "Number of Genes",
+       fill = "Direction") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 14, face = "bold"))
+
+print(p_direction)
+
+# 3. TOP AGING GENES ACROSS TISSUES
+print("\nIdentifying top aging genes...")
+
+top_aging_genes <- combined_results %>%
+  filter(gene_category == "Known_Aging" & significant) %>%
+  group_by(gene) %>%
+  summarise(
+    tissues_affected = n(),
+    avg_log2_fc = mean(log2_fc),
+    min_p_adj = min(p_adjusted),
+    tissues_list = paste(tissue, collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(tissues_affected), min_p_adj) %>%
+  head(15)
+
+print("TOP 15 AGING GENES ACROSS TISSUES:")
+print(top_aging_genes)
+
+# Heatmap of top aging genes
+if(nrow(top_aging_genes) > 0) {
+  heatmap_data <- combined_results %>%
+    filter(gene %in% top_aging_genes$gene[1:min(10, nrow(top_aging_genes))]) %>%
+    filter(significant) %>%
+    select(gene, tissue, log2_fc) %>%
+    dcast(gene ~ tissue, value.var = "log2_fc", fill = 0)
+  
+  heatmap_melted <- melt(heatmap_data, id.vars = "gene", variable.name = "tissue", value.name = "log2_fc")
+  
+  p_heatmap <- ggplot(heatmap_melted, aes(x = tissue, y = gene, fill = log2_fc)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+    labs(title = "Top Aging Genes Heatmap",
+         x = "Tissue", y = "Gene", fill = "Log2 FC") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          plot.title = element_text(size = 14, face = "bold"))
+  
+  print(p_heatmap)
+}
+
+# ============================================================================
+# FINAL SUMMARY
+# ============================================================================
+
+print("\n================== ANALYSIS COMPLETE ==================")
+print("COMPREHENSIVE AGING ANALYSIS SUMMARY:")
+print(paste("   Analyzed", length(final_genes), "biologically important genes"))
+print(paste("   Top 5 tissues:", paste(top_5_tissues, collapse = ", ")))
+print(paste("   Total significant aging genes found:", sum(combined_results$significant)))
+print(paste("   Known aging genes affected:", sum(combined_results$significant & combined_results$gene_category == "Known_Aging")))
+print("")
+print("KEY FINDINGS:")
+best_tissue <- summary_stats$tissue[which.max(summary_stats$known_aging_sig)]
+worst_tissue <- summary_stats$tissue[which.min(summary_stats$known_aging_sig)]
+print(paste("   Most aging-affected tissue:", best_tissue))
+print(paste("   Least aging-affected tissue:", worst_tissue))
+print(paste("   Average effect size range:", 
+            round(min(summary_stats$avg_effect_size, na.rm = TRUE), 2), "-", 
+            round(max(summary_stats$avg_effect_size, na.rm = TRUE), 2)))
+print("")
+print("All results generated with full dataset.")
+print("===========================================================")
+```
+
